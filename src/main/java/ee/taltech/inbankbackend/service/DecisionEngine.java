@@ -2,10 +2,7 @@ package ee.taltech.inbankbackend.service;
 
 import com.github.vladislavgoltjajev.personalcode.locale.estonia.EstonianPersonalCodeValidator;
 import ee.taltech.inbankbackend.config.DecisionEngineConstants;
-import ee.taltech.inbankbackend.exceptions.InvalidLoanAmountException;
-import ee.taltech.inbankbackend.exceptions.InvalidLoanPeriodException;
-import ee.taltech.inbankbackend.exceptions.InvalidPersonalCodeException;
-import ee.taltech.inbankbackend.exceptions.NoValidLoanException;
+import ee.taltech.inbankbackend.exceptions.*;
 import org.springframework.stereotype.Service;
 
 /**
@@ -19,11 +16,12 @@ public class DecisionEngine {
     // Used to check for the validity of the presented ID code.
     private final EstonianPersonalCodeValidator validator = new EstonianPersonalCodeValidator();
     private int creditModifier = 0;
+    private final AgeValidator ageValidator = new AgeValidator();
 
     /**
      * Calculates the maximum loan amount and period for the customer based on their ID code,
      * the requested loan amount and the loan period.
-     * The loan period must be between 12 and 60 months (inclusive).
+     * The loan period must be between 12 and 48 months (inclusive).
      * The loan amount must be between 2000 and 10000€ months (inclusive).
      *
      * @param personalCode ID code of the customer that made the request.
@@ -34,10 +32,11 @@ public class DecisionEngine {
      * @throws InvalidLoanAmountException If the requested loan amount is invalid
      * @throws InvalidLoanPeriodException If the requested loan period is invalid
      * @throws NoValidLoanException If there is no valid loan found for the given ID code, loan amount and loan period
+     * @throws InvalidAgeException If the age of the person does not meet our requirements.
      */
     public Decision calculateApprovedLoan(String personalCode, Long loanAmount, int loanPeriod)
             throws InvalidPersonalCodeException, InvalidLoanAmountException, InvalidLoanPeriodException,
-            NoValidLoanException {
+            NoValidLoanException, InvalidAgeException {
         try {
             verifyInputs(personalCode, loanAmount, loanPeriod);
         } catch (Exception e) {
@@ -70,7 +69,22 @@ public class DecisionEngine {
      * @return Largest valid loan amount
      */
     private int highestValidLoanAmount(int loanPeriod) {
-        return creditModifier * loanPeriod;
+        int maxLoan = creditModifier * loanPeriod;
+        if (isLoanApproved(creditModifier, maxLoan, loanPeriod)) {
+            return maxLoan;
+        }
+        return 0;
+    }
+
+    /**
+     * Calculates if the loan will be approved based on the creditModifier, amount and period.
+     * @param creditModifier Credit modifier based on personal IdCode.
+     * @param loanAmount Loan amount.
+     * @param loanPeriod Loan period.
+     * @return if the loan is approved
+     */
+    private boolean isLoanApproved(int creditModifier, int loanAmount, int loanPeriod) {
+        return ((creditModifier / (double) loanAmount) * loanPeriod) / 10 >= DecisionEngineConstants.MINIMUM_CREDIT_SCORE;
     }
 
     /**
@@ -109,7 +123,8 @@ public class DecisionEngine {
      * @throws InvalidLoanPeriodException If the requested loan period is invalid
      */
     private void verifyInputs(String personalCode, Long loanAmount, int loanPeriod)
-            throws InvalidPersonalCodeException, InvalidLoanAmountException, InvalidLoanPeriodException {
+            throws InvalidPersonalCodeException, InvalidLoanAmountException, InvalidLoanPeriodException
+            , InvalidAgeException {
 
         if (!validator.isValid(personalCode)) {
             throw new InvalidPersonalCodeException("Invalid personal ID code!");
@@ -121,6 +136,9 @@ public class DecisionEngine {
         if (!(DecisionEngineConstants.MINIMUM_LOAN_PERIOD <= loanPeriod)
                 || !(loanPeriod <= DecisionEngineConstants.MAXIMUM_LOAN_PERIOD)) {
             throw new InvalidLoanPeriodException("Invalid loan period!");
+        }
+        if (!ageValidator.isCorrectAge(personalCode)) {
+            throw new InvalidAgeException("Loan unavailable: Age requirements not met");
         }
 
     }
